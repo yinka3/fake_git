@@ -1,0 +1,2 @@
+[console_scripts]
+fake-git = fake_git.cli:main
