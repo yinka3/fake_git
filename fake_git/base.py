@@ -1,7 +1,8 @@
 import itertools
 import operator
 import os
-from collections import namedtuple
+import string
+from collections import namedtuple, deque
 
 from . import data
 
@@ -78,16 +79,18 @@ def read_tree(tree_oid):
 
 
 def commit(message):
+    if message == '#': message = 'No commit message'
+
     commit = f'tree {write_tree()}\n'
 
-    HEAD = data.get_ref('HEAD')
+    HEAD = data.get_ref('HEAD').value
     if HEAD:
         commit += f'parent {HEAD}\n'
     commit += "\n"
     commit += f'{message}\n'
 
     oid = data.hash_object(commit.encode(), 'commit')
-    data.update_ref('HEAD', oid)
+    data.update_ref('HEAD', data.RefValue(symbolic=False, value=oid))
     return oid
 
 def get_commit(oid):
@@ -111,13 +114,43 @@ def get_commit(oid):
 def checkout(oid):
     commit = get_commit(oid)
     read_tree(commit.tree)
-    data.update_ref('HEAD', oid)
+    data.update_ref('HEAD', data.RefValue(symbolic=False, value=oid))
 
 def create_tag(name, oid):
-    data.update_ref(f'ref/tags/{name}', oid)
+    data.update_ref(f'refs/tags/{name}', data.RefValue(symbolic=False, value=oid))
+
+def create_branch(name, oid):
+    data.update_ref(f'refs/heads/{name}', data.RefValue(symbolic=False, value=oid))
+
+def iter_commits_and_parents(oids):
+    oids = deque(oids)
+    visited = set()
+
+    while oids:
+        oid = oids.popleft()
+        if not oid or oid in visited:
+            continue
+        visited.add(oid)
+        yield oid
+
+        commit = get_commit(oid)
+        oids.appendleft(commit.parent)
+
 
 def get_oid(name):
-    return data.get_ref(name) or name
+    if name == '@': name = 'HEAD'
+
+    refs_paths = [f'{name}', f'refs/{name}', f'refs/tags/{name}',f'refs/heads/{name}']
+
+    for ref in refs_paths:
+        if data.get_ref(ref).value:
+            return data.get_ref(ref).value
+
+    is_hex = all(c in string.hexdigits for c in name)
+    if len(name) == 40 and is_hex:
+        return name
+
+    assert False, f"Unknown name: {name}"
 
 def is_ignored (path):
     return '.fake-git' in path.split('/')

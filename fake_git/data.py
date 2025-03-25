@@ -1,8 +1,11 @@
 import os
 import hashlib
+from collections import namedtuple
 
 GIT_DIR = ".fake-git"
 # object database
+
+RefValue = namedtuple('RefValue', ['symbolic', 'value'])
 
 def init():
     os.makedirs(os.path.join(GIT_DIR, "objects"))
@@ -28,14 +31,32 @@ def get_object(oid, expected='blob'):
         raise ValueError(f'Expected {expected}, got {_type}')
     return content
 
-def update_ref(ref, oid):
+def iter_refs():
+    refs = ["HEAD"]
+    for root, _, files in os.walk(f'{GIT_DIR}/refs/'):
+        root = os.path.relpath(root, GIT_DIR)
+        refs.extend(f'{root}/{name}' for name in files)
+
+    for ref_name in refs:
+        yield ref_name, get_ref(ref_name)
+
+def update_ref(ref, value):
+    assert not value.symbolic
     ref_path = f'{GIT_DIR}/{ref}'
     os.makedirs(os.path.dirname(ref_path), exist_ok=True)
     with open (ref_path, "w") as f:
-        f.write(oid)
+        f.write(value.value)
 
 def get_ref(ref):
     ref_path = f'{GIT_DIR}/{ref}'
+    value = None
     if os.path.isfile(ref_path):
         with open(ref_path) as f:
-            return f.read().strip()
+            value = f.read().strip()
+
+    if value and value.startswith('ref:'):
+        return get_ref(value.split(':', 1)[1].strip())
+
+    return RefValue(symbolic=False, value=value)
+
+

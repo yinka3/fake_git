@@ -1,6 +1,7 @@
 import argparse
 import sys
 import textwrap
+import subprocess
 from time import sleep
 import os
 from . import data, base
@@ -37,11 +38,12 @@ def parse_arg():
 
     commit_parser = commands.add_parser('commit')
     commit_parser.set_defaults(func=commit)
-    commit_parser.add_argument('-m','--message', required=False)
+    commit_parser.add_argument('-m','--message', default="#", nargs='?')
+
 
     log_parser = commands.add_parser('log')
     log_parser.set_defaults(func=log)
-    log_parser.add_argument('oid', type=oid,  nargs='?')
+    log_parser.add_argument('oid', default="@", type=oid,  nargs='?')
 
     checkout_parser = commands.add_parser('checkout')
     checkout_parser.set_defaults(func=checkout)
@@ -49,8 +51,15 @@ def parse_arg():
 
     tag_parser = commands.add_parser('tag')
     tag_parser.set_defaults(func=tag)
-    tag_parser.add_argument('oid', type=oid, nargs='?')
+    tag_parser.add_argument('oid', default="@", type=oid, nargs='?')
 
+    k_parser = commands.add_parser('k')
+    k_parser.set_defaults(func=k)
+
+    branch_parser = commands.add_parser('branch')
+    branch_parser.set_defaults(func=branch)
+    branch_parser.add_argument('name')
+    branch_parser.add_argument('start_point', default='@', type=oid, nargs='?')
 
     return parser.parse_args()
 
@@ -88,19 +97,45 @@ def commit(args):
     print('Done!')
 
 def log(args):
-    oid = args.oid or data.get_ref('HEAD')
-    while oid:
+
+    for oid in base.iter_commits_and_parents({args.oid}):
         commit = base.get_commit(oid)
 
-        print(f'commit {oid}\n')
+        print(f'Commit: {oid}\n')
         print(textwrap.indent(commit.message, '  '))
-        print('')
-
-        oid = commit.parent
+        print(" ")
 
 def checkout(args):
     base.checkout(args.oid)
 
 def tag(args):
-    oid = args.oid or data.get_ref('HEAD')
-    base.create_tag(args.name, oid)
+    base.create_tag(args.name, args.oid)
+
+def k(args):
+    dot = 'digraph commits{\n'
+    oids = set()
+
+    for ref_name, ref_oid in data.iter_refs():
+        dot += f'"{ref_name}" [shape=note]\n'
+        dot += f'"{ref_name}" -> "{ref_oid}"\n'
+        oids.add(ref_oid)
+
+    for oid in base.iter_commits_and_parents(oids):
+        commit = base.get_commit(oid)
+        dot += f'"{oid}" [shape=box style=filled label="{oid[:10]}"]\n'
+        if commit.parent:
+            dot += f'"{oid}" -> "{commit.parent}"\n'
+
+    dot += '}'
+    print(dot)
+
+    with subprocess.Popen (
+        ['dot', '-Tx11', '/dev/stdin'],
+        stdin=subprocess.PIPE) as proc:
+        proc.communicate (dot.encode ())
+
+def branch(args):
+    base.create_branch(args.name, args.start_point)
+    print(f'Branch {args.name} created at {args.start_point[:10]}')
+
+
