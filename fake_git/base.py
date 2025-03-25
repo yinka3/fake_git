@@ -1,5 +1,11 @@
+import itertools
+import operator
 import os
+from collections import namedtuple
+
 from . import data
+
+Commit = namedtuple('Commit', ['tree', 'parent', 'message'])
 
 def write_tree(directory='.'):
     entries = []
@@ -12,7 +18,7 @@ def write_tree(directory='.'):
             if entry.is_file(follow_symlinks=False):
                 _type = 'blob'
                 with open (full, 'rb') as _f:
-                    oid = data.hash_object(_f.read()), full
+                    oid = data.hash_object(_f.read())
             elif entry.is_dir(follow_symlinks=False):
                 _type = 'tree'
                 oid = write_tree(full)
@@ -69,6 +75,49 @@ def read_tree(tree_oid):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'wb') as f:
             f.write(data.get_object(oid))
+
+
+def commit(message):
+    commit = f'tree {write_tree()}\n'
+
+    HEAD = data.get_ref('HEAD')
+    if HEAD:
+        commit += f'parent {HEAD}\n'
+    commit += "\n"
+    commit += f'{message}\n'
+
+    oid = data.hash_object(commit.encode(), 'commit')
+    data.update_ref('HEAD', oid)
+    return oid
+
+def get_commit(oid):
+    parent = None
+
+    commit = data.get_object(oid, 'commit').decode()
+    lines = iter(commit.splitlines())
+
+    for line in itertools.takewhile(operator.truth, lines):
+        key, value = line.split(' ', 1)
+        if key == 'parent':
+            parent = value
+        elif key == 'tree':
+            tree = value
+        else:
+            assert False, f'Unknown field {key}'
+
+    message = '\n'.join(lines)
+    return Commit(tree=tree, parent=parent, message=message)
+
+def checkout(oid):
+    commit = get_commit(oid)
+    read_tree(commit.tree)
+    data.update_ref('HEAD', oid)
+
+def create_tag(name, oid):
+    data.update_ref(f'ref/tags/{name}', oid)
+
+def get_oid(name):
+    return data.get_ref(name) or name
 
 def is_ignored (path):
     return '.fake-git' in path.split('/')
