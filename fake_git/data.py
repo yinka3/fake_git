@@ -31,32 +31,50 @@ def get_object(oid, expected='blob'):
         raise ValueError(f'Expected {expected}, got {_type}')
     return content
 
-def iter_refs():
-    refs = ["HEAD"]
+def iter_refs(prefix='', deref=True):
+    refs = ['HEAD']
+
     for root, _, files in os.walk(f'{GIT_DIR}/refs/'):
         root = os.path.relpath(root, GIT_DIR)
         refs.extend(f'{root}/{name}' for name in files)
 
     for ref_name in refs:
-        yield ref_name, get_ref(ref_name)
+        if not ref_name.startswith(prefix):
+            continue
+        yield ref_name, get_ref(ref_name, deref=deref)
 
-def update_ref(ref, value):
-    assert not value.symbolic
+def update_ref(ref, value, deref=True):
+    ref = _get_ref_internal(ref, deref)[0]
+    assert value.value
+
+    if value.symbolic:
+        value = f'ref: {value.value}'
+    else:
+        value = value.value
+
     ref_path = f'{GIT_DIR}/{ref}'
     os.makedirs(os.path.dirname(ref_path), exist_ok=True)
     with open (ref_path, "w") as f:
-        f.write(value.value)
+        f.write(value)
 
-def get_ref(ref):
+
+def get_ref(ref, deref=True):
+    return _get_ref_internal(ref, deref)[1]
+
+def _get_ref_internal(ref, deref):
     ref_path = f'{GIT_DIR}/{ref}'
     value = None
     if os.path.isfile(ref_path):
         with open(ref_path) as f:
             value = f.read().strip()
 
-    if value and value.startswith('ref:'):
-        return get_ref(value.split(':', 1)[1].strip())
+    is_symbolic = bool(value) and value.startswith('ref:')
+    if is_symbolic:
+        value = value.split(':', 1)[1].strip()
 
-    return RefValue(symbolic=False, value=value)
+        if deref:
+            return _get_ref_internal(value, deref=True)
+
+    return ref, RefValue(symbolic=is_symbolic, value=value)
 
 

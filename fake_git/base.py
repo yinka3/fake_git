@@ -5,8 +5,13 @@ import string
 from collections import namedtuple, deque
 
 from . import data
+from .data import GIT_DIR, get_ref
 
 Commit = namedtuple('Commit', ['tree', 'parent', 'message'])
+
+def init():
+    data.init()
+    data.update_ref('HEAD', data.RefValue(symbolic=True, value='refs/heads/master'))
 
 def write_tree(directory='.'):
     entries = []
@@ -45,6 +50,8 @@ def get_tree(oid, base_path=''):
     result = {}
 
     for _type, oid, name in _iter_tree_entries(oid):
+        assert '/' not in name
+        assert name not in ('..', '.')
         path = base_path + name
         if _type == 'blob':
             result[path] = oid
@@ -111,10 +118,20 @@ def get_commit(oid):
     message = '\n'.join(lines)
     return Commit(tree=tree, parent=parent, message=message)
 
-def checkout(oid):
+def checkout(name):
+    oid = get_oid(name)
     commit = get_commit(oid)
     read_tree(commit.tree)
-    data.update_ref('HEAD', data.RefValue(symbolic=False, value=oid))
+
+    if is_branch(name):
+        HEAD = data.RefValue(symbolic=True, value=f'refs/heads/{name}')
+    else:
+        HEAD = data.RefValue(symbolic=False, value=oid)
+
+    data.update_ref('HEAD', HEAD)
+
+def is_branch(name):
+    return data.get_ref(f'refs/heads/{name}').value is not None
 
 def create_tag(name, oid):
     data.update_ref(f'refs/tags/{name}', data.RefValue(symbolic=False, value=oid))
@@ -143,7 +160,7 @@ def get_oid(name):
     refs_paths = [f'{name}', f'refs/{name}', f'refs/tags/{name}',f'refs/heads/{name}']
 
     for ref in refs_paths:
-        if data.get_ref(ref).value:
+        if data.get_ref(ref, deref=False).value:
             return data.get_ref(ref).value
 
     is_hex = all(c in string.hexdigits for c in name)
@@ -151,6 +168,32 @@ def get_oid(name):
         return name
 
     assert False, f"Unknown name: {name}"
+
+def get_branch_name():
+    HEAD = data.get_ref('HEAD', deref=False)
+    if not HEAD.symbolic:
+        return None
+    assert HEAD.value.startswith('refs/heads/')
+    return os.path.relpath(HEAD.value, 'refs/heads/')
+
+def iter_branch_names():
+    for ref_name, _ in data.iter_refs('refs/heads/'):
+        yield  os.path.relpath(ref_name, 'refs/heads/')
+
+def reset(oid):
+    data.update_ref('HEAD', data.RefValue(symbolic=False, value=oid))
+
+def get_working_tree():
+    result = {}
+    for root, _, files in os.walk('.'):
+        for file in files:
+            path = os.path.relpath(f"{root}/{file}")
+            if is_ignored(path) or not os.path.isfile(path):
+                continue
+            with open(path, 'rb') as f:
+                result[path] = data.hash_object(f.read())
+
+    return result
 
 def is_ignored (path):
     return '.fake-git' in path.split('/')

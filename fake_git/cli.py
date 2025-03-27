@@ -4,7 +4,7 @@ import textwrap
 import subprocess
 from time import sleep
 import os
-from . import data, base
+from . import data, base, diff
 
 def main():
     args = parse_arg()
@@ -47,7 +47,7 @@ def parse_arg():
 
     checkout_parser = commands.add_parser('checkout')
     checkout_parser.set_defaults(func=checkout)
-    checkout_parser.add_argument('oid', type=oid)
+    checkout_parser.add_argument('commit')
 
     tag_parser = commands.add_parser('tag')
     tag_parser.set_defaults(func=tag)
@@ -58,14 +58,29 @@ def parse_arg():
 
     branch_parser = commands.add_parser('branch')
     branch_parser.set_defaults(func=branch)
-    branch_parser.add_argument('name')
+    branch_parser.add_argument('name', nargs='?')
     branch_parser.add_argument('start_point', default='@', type=oid, nargs='?')
+
+    status_parser = commands.add_parser('status')
+    status_parser.set_defaults(func=status)
+
+    reset_parser = commands.add_parser('reset')
+    reset_parser.set_defaults(func=reset)
+    reset_parser.add_argument('commit', type=oid)
+
+    show_parser = commands.add_parser('show')
+    show_parser.set_defaults(func=show)
+    show_parser.add_argument('oid', type=oid, nargs='?')
+
+    diff_parser = commands.add_parser('diff')
+    diff_parser.set_defaults(func=_diff)
+    diff_parser.add_argument('commit', default='@', type=oid, nargs='?')
 
     return parser.parse_args()
 
 def init(args):
     print('Initializing...')
-    data.init()
+    base.init()
     sleep(2)
     print(f"Initialized empty fake-git repo in {os.getcwd()}/{data.GIT_DIR}")
 
@@ -97,16 +112,17 @@ def commit(args):
     print('Done!')
 
 def log(args):
+    refs = {}
+
+    for ref_name, ref in data.iter_refs():
+        refs.setdefault(ref.value, []).append(ref_name)
 
     for oid in base.iter_commits_and_parents({args.oid}):
         commit = base.get_commit(oid)
-
-        print(f'Commit: {oid}\n')
-        print(textwrap.indent(commit.message, '  '))
-        print(" ")
+        _print_commit(oid, commit, refs.get(oid))
 
 def checkout(args):
-    base.checkout(args.oid)
+    base.checkout(args.commit)
 
 def tag(args):
     base.create_tag(args.name, args.oid)
@@ -115,10 +131,12 @@ def k(args):
     dot = 'digraph commits{\n'
     oids = set()
 
-    for ref_name, ref_oid in data.iter_refs():
+    for ref_name, ref_oid in data.iter_refs(deref=False):
         dot += f'"{ref_name}" [shape=note]\n'
-        dot += f'"{ref_name}" -> "{ref_oid}"\n'
-        oids.add(ref_oid)
+        dot += f'"{ref_name}" -> "{ref_oid.value}"\n'
+
+        if not ref_oid.symbolic:
+            oids.add(ref_oid.value)
 
     for oid in base.iter_commits_and_parents(oids):
         commit = base.get_commit(oid)
@@ -135,7 +153,54 @@ def k(args):
         proc.communicate (dot.encode ())
 
 def branch(args):
-    base.create_branch(args.name, args.start_point)
-    print(f'Branch {args.name} created at {args.start_point[:10]}')
+
+    if not args.name:
+        current = base.get_branch_name()
+        for branch in base.iter_branch_names():
+            prefix = "*" if branch == current else ' '
+            print(f'{prefix} {branch}')
+    else:
+        base.create_branch(args.name, args.start_point)
+        print(f'Branch {args.name} created at {args.start_point[:10]}')
 
 
+def status(args):
+    HEAD = base.get_oid("@")
+    branch = base.get_branch_name()
+    if branch:
+        print(f"On branch {branch}")
+    else:
+        print(f'HEAD detached at {HEAD[:10]}')
+
+    print('\nChanges to be committed:\n')
+    HEAD_tree = HEAD and base.get_commit(HEAD).tree
+    for path, action in diff.iter_changed_files(base.get_tree(HEAD_tree), base.get_working_tree()):
+        print(f'{action:>12} {path}')
+
+def reset(args):
+    base.reset(args.commit)
+
+def _print_commit(oid, commit, refs=None):
+    refs_str = f'({", ".join(refs)})' if refs else ""
+    print(f'Commit: {oid} {refs_str}\n')
+    print(textwrap.indent(commit.message, '  '))
+    print('')
+
+def show(args):
+    if not args.oid:
+        return
+    commit = base.get_commit(args.oid)
+    par_tree = None
+    if commit.parent:
+        par_tree = base.get_commit(commit.parent).tree
+    _print_commit(args.oid, commit)
+    result = diff.diff_trees(base.get_tree (par_tree), base.get_tree(commit.tree))
+    sys.stdout.flush()
+    sys.stdout.buffer.write(result)
+
+def _diff(args):
+    tree = args.commit and base.get_commit(args.commit).tree
+
+    result = diff.diff_trees(base.get_tree (tree), base.get_working_tree())
+    sys.stdout.flush()
+    sys.stdout.buffer.write(result)
