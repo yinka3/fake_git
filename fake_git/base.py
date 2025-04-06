@@ -4,10 +4,10 @@ import os
 import string
 from collections import namedtuple, deque
 
-from . import data
+from . import data, diff
 from .data import GIT_DIR, get_ref
 
-Commit = namedtuple('Commit', ['tree', 'parent', 'message'])
+Commit = namedtuple('Commit', ['tree', 'parents', 'message'])
 
 def init():
     data.init()
@@ -93,15 +93,20 @@ def commit(message):
     HEAD = data.get_ref('HEAD').value
     if HEAD:
         commit += f'parent {HEAD}\n'
+    MERGE_HEAD = data.get_ref('MERGE_HEAD').value
+    if MERGE_HEAD:
+        commit += f'parent {MERGE_HEAD}\n'
+        data.delete_ref("MERGE_HEAD", deref=False)
     commit += "\n"
     commit += f'{message}\n'
+
 
     oid = data.hash_object(commit.encode(), 'commit')
     data.update_ref('HEAD', data.RefValue(symbolic=False, value=oid))
     return oid
 
 def get_commit(oid):
-    parent = None
+    parents = []
 
     commit = data.get_object(oid, 'commit').decode()
     lines = iter(commit.splitlines())
@@ -109,14 +114,14 @@ def get_commit(oid):
     for line in itertools.takewhile(operator.truth, lines):
         key, value = line.split(' ', 1)
         if key == 'parent':
-            parent = value
+            parents.append(value)
         elif key == 'tree':
             tree = value
         else:
             assert False, f'Unknown field {key}'
 
     message = '\n'.join(lines)
-    return Commit(tree=tree, parent=parent, message=message)
+    return Commit(tree=tree, parents=parents, message=message)
 
 def checkout(name):
     oid = get_oid(name)
@@ -151,7 +156,8 @@ def iter_commits_and_parents(oids):
         yield oid
 
         commit = get_commit(oid)
-        oids.appendleft(commit.parent)
+        oids.extendleft(commit.parents[:1])
+        oids.extend(commit.parents[1:])
 
 
 def get_oid(name):
@@ -194,6 +200,32 @@ def get_working_tree():
                 result[path] = data.hash_object(f.read())
 
     return result
+
+def read_tree_merged(t_HEAD, t_other):
+    _delete_cd()
+    for path, blob in diff.merge_trees(get_tree(t_HEAD), get_tree(t_other)).items():
+        os.makedirs(f'./{os.path.dirname(path)}', exist_ok=True)
+        with open(path, 'wb') as f:
+            f.write(blob)
+
+
+def merge(other_branch):
+    HEAD = data.get_ref('HEAD').value
+    assert HEAD
+    c_HEAD = get_commit(HEAD)
+    c_other = get_commit(other_branch)
+
+    data.update_ref('MERGE_HEAD', data.RefValue(symbolic=False, value=other_branch))
+    read_tree_merged(c_HEAD, c_other)
+    print("Just merged in working directory\nPlease commit")
+
+def get_merge_base(oid1, oid2):
+    parent1 = set(iter_commits_and_parents({oid1}))
+
+    for oid in iter_commits_and_parents({oid2}):
+        if oid in parent1:
+            return oid
+
 
 def is_ignored (path):
     return '.fake-git' in path.split('/')

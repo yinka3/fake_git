@@ -76,6 +76,15 @@ def parse_arg():
     diff_parser.set_defaults(func=_diff)
     diff_parser.add_argument('commit', default='@', type=oid, nargs='?')
 
+    merge_parser = commands.add_parser('merge')
+    merge_parser.set_defaults(func=merge)
+    merge_parser.add_argument('commit', type=oid)
+
+    merge_base_parser = commands.add_parser('merge-base')
+    merge_base_parser.set_defaults(func=merge_base)
+    merge_base_parser.add_argument('commit1', type=oid)
+    merge_base_parser.add_argument('commit2', type=oid)
+
     return parser.parse_args()
 
 def init(args):
@@ -141,8 +150,8 @@ def k(args):
     for oid in base.iter_commits_and_parents(oids):
         commit = base.get_commit(oid)
         dot += f'"{oid}" [shape=box style=filled label="{oid[:10]}"]\n'
-        if commit.parent:
-            dot += f'"{oid}" -> "{commit.parent}"\n'
+        for parent in commit.parents:
+            dot += f'"{oid}" -> "{parent}"\n'
 
     dot += '}'
     print(dot)
@@ -171,6 +180,9 @@ def status(args):
         print(f"On branch {branch}")
     else:
         print(f'HEAD detached at {HEAD[:10]}')
+    MERGE_HEAD = data.get_ref('MERGE_HEAD').value
+    if MERGE_HEAD:
+        print(f'Merging with {MERGE_HEAD[:10]}')
 
     print('\nChanges to be committed:\n')
     HEAD_tree = HEAD and base.get_commit(HEAD).tree
@@ -191,8 +203,8 @@ def show(args):
         return
     commit = base.get_commit(args.oid)
     par_tree = None
-    if commit.parent:
-        par_tree = base.get_commit(commit.parent).tree
+    if commit.parents:
+        par_tree = base.get_commit(commit.parents[0]).tree
     _print_commit(args.oid, commit)
     result = diff.diff_trees(base.get_tree (par_tree), base.get_tree(commit.tree))
     sys.stdout.flush()
@@ -204,3 +216,9 @@ def _diff(args):
     result = diff.diff_trees(base.get_tree (tree), base.get_working_tree())
     sys.stdout.flush()
     sys.stdout.buffer.write(result)
+
+def merge(args):
+    base.merge(args.commit)
+
+def merge_base(args):
+    print(base.get_merge_base(args.commit1, args.commit2))

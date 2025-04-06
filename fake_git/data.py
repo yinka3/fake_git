@@ -32,7 +32,7 @@ def get_object(oid, expected='blob'):
     return content
 
 def iter_refs(prefix='', deref=True):
-    refs = ['HEAD']
+    refs = ['HEAD', 'MERGE_HEAD']
 
     for root, _, files in os.walk(f'{GIT_DIR}/refs/'):
         root = os.path.relpath(root, GIT_DIR)
@@ -41,7 +41,9 @@ def iter_refs(prefix='', deref=True):
     for ref_name in refs:
         if not ref_name.startswith(prefix):
             continue
-        yield ref_name, get_ref(ref_name, deref=deref)
+        ref = get_ref(ref_name, deref=deref)
+        if ref_name.value:
+            yield ref_name, ref
 
 def update_ref(ref, value, deref=True):
     ref = _get_ref_internal(ref, deref)[0]
@@ -60,6 +62,10 @@ def update_ref(ref, value, deref=True):
 
 def get_ref(ref, deref=True):
     return _get_ref_internal(ref, deref)[1]
+
+def delete_ref(ref, deref=True):
+    ref = _get_ref_internal(ref, deref)[0]
+    os.remove(f'{GIT_DIR}/{ref}')
 
 def _get_ref_internal(ref, deref):
     ref_path = f'{GIT_DIR}/{ref}'
