@@ -7,8 +7,9 @@ import os
 from . import data, base, diff
 
 def main():
-    args = parse_arg()
-    args.func(args)
+    with data.change_git_dir('.'):
+        args = parse_arg()
+        args.func(args)
 
 def parse_arg():
     parser = argparse.ArgumentParser()

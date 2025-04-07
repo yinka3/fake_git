@@ -1,11 +1,20 @@
+import contextlib
 import os
 import hashlib
 from collections import namedtuple
 
-GIT_DIR = ".fake-git"
+GIT_DIR = None
 # object database
 
 RefValue = namedtuple('RefValue', ['symbolic', 'value'])
+
+@contextlib.contextmanager
+def change_git_dir(new_dir):
+    global GIT_DIR
+    old_dir = GIT_DIR
+    GIT_DIR = f'{new_dir}/.fake-git'
+    yield
+    GIT_DIR = old_dir
 
 def init():
     os.makedirs(os.path.join(GIT_DIR, "objects"))
